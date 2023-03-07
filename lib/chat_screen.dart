@@ -92,7 +92,6 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   Future<void> initSpeechState() async {
-    _logEvent('Initialize');
     try {
       var hasSpeech = await speech.initialize(
         onError: errorListener,
@@ -187,6 +186,32 @@ class _ChatScreenState extends State<ChatScreen> {
     });
   }
 
+  void _switchLang(selectedVal) {
+    setState(() {
+      _currentLocaleId = selectedVal;
+    });
+    print(selectedVal);
+  }
+
+  void _logEvent(String eventDescription) {
+    if (_logEvents) {
+      var eventTime = DateTime.now().toIso8601String();
+      print('$eventTime $eventDescription');
+    }
+  }
+
+  void _switchLogging(bool? val) {
+    setState(() {
+      _logEvents = val ?? false;
+    });
+  }
+
+  void _switchOnDevice(bool? val) {
+    setState(() {
+      _onDevice = val ?? false;
+    });
+  }
+
   void insertNewData(String response, {bool isImage = false}) {
     ChatMessage botMessage = ChatMessage(
       text: response,
@@ -256,6 +281,21 @@ class _ChatScreenState extends State<ChatScreen> {
               const Divider(
                 height: 1.0,
               ),
+              RecognitionResultsWidget(lastWords: lastWords, level: level),
+              InitSpeechWidget(_hasSpeech, initSpeechState),
+              SpeechControlWidget(_hasSpeech, speech.isListening,
+                  startListening, stopListening, cancelListening),
+              SessionOptionsWidget(
+                _currentLocaleId,
+                _switchLang,
+                _localeNames,
+                _logEvents,
+                _switchLogging,
+                _pauseForController,
+                _listenForController,
+                _onDevice,
+                _switchOnDevice,
+              ),
               Container(
                 decoration: BoxDecoration(
                   color: context.cardColor,
@@ -265,5 +305,247 @@ class _ChatScreenState extends State<ChatScreen> {
             ],
           ),
         ));
+  }
+}
+
+// Speech to text widgets
+class RecognitionResultsWidget extends StatelessWidget {
+  const RecognitionResultsWidget({
+    Key? key,
+    required this.lastWords,
+    required this.level,
+  }) : super(key: key);
+
+  final String lastWords;
+  final double level;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      color: Theme.of(context).selectedRowColor,
+      child: Center(
+        child: Text(
+          lastWords,
+          textAlign: TextAlign.center,
+        ),
+      ),
+    );
+  }
+}
+
+class HeaderWidget extends StatelessWidget {
+  const HeaderWidget({
+    Key? key,
+  }) : super(key: key);
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Text(
+        'Speech recognition available',
+        style: TextStyle(fontSize: 22.0),
+      ),
+    );
+  }
+}
+
+/// Display the current error status from the speech
+/// recognizer
+class ErrorWidget extends StatelessWidget {
+  const ErrorWidget({
+    Key? key,
+    required this.lastError,
+  }) : super(key: key);
+
+  final String lastError;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      children: <Widget>[
+        Center(
+          child: Text(
+            'Error Status',
+            style: TextStyle(fontSize: 22.0),
+          ),
+        ),
+        Center(
+          child: Text(lastError),
+        ),
+      ],
+    );
+  }
+}
+
+/// Controls to start and stop speech recognition
+class SpeechControlWidget extends StatelessWidget {
+  const SpeechControlWidget(this.hasSpeech, this.isListening,
+      this.startListening, this.stopListening, this.cancelListening,
+      {Key? key})
+      : super(key: key);
+
+  final bool hasSpeech;
+  final bool isListening;
+  final void Function() startListening;
+  final void Function() stopListening;
+  final void Function() cancelListening;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.spaceAround,
+      children: <Widget>[
+        TextButton(
+          onPressed: !hasSpeech || isListening ? null : startListening,
+          child: Text('Start'),
+        ),
+        TextButton(
+          onPressed: isListening ? stopListening : null,
+          child: Text('Stop'),
+        ),
+        TextButton(
+          onPressed: isListening ? cancelListening : null,
+          child: Text('Cancel'),
+        )
+      ],
+    );
+  }
+}
+
+class SessionOptionsWidget extends StatelessWidget {
+  const SessionOptionsWidget(
+      this.currentLocaleId,
+      this.switchLang,
+      this.localeNames,
+      this.logEvents,
+      this.switchLogging,
+      this.pauseForController,
+      this.listenForController,
+      this.onDevice,
+      this.switchOnDevice,
+      {Key? key})
+      : super(key: key);
+
+  final String currentLocaleId;
+  final void Function(String?) switchLang;
+  final void Function(bool?) switchLogging;
+  final void Function(bool?) switchOnDevice;
+  final TextEditingController pauseForController;
+  final TextEditingController listenForController;
+  final List<LocaleName> localeNames;
+  final bool logEvents;
+  final bool onDevice;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.all(8.0),
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: <Widget>[
+          Row(
+            children: [
+              Text('Language: '),
+              DropdownButton<String>(
+                onChanged: (selectedVal) => switchLang(selectedVal),
+                value: currentLocaleId,
+                items: localeNames
+                    .map(
+                      (localeName) => DropdownMenuItem(
+                        value: localeName.localeId,
+                        child: Text(localeName.name),
+                      ),
+                    )
+                    .toList(),
+              ),
+            ],
+          ),
+          Row(
+            children: [
+              Text('pauseFor: '),
+              Container(
+                  padding: EdgeInsets.only(left: 8),
+                  width: 80,
+                  child: TextFormField(
+                    controller: pauseForController,
+                  )),
+              Container(
+                  padding: EdgeInsets.only(left: 16),
+                  child: Text('listenFor: ')),
+              Container(
+                  padding: EdgeInsets.only(left: 8),
+                  width: 80,
+                  child: TextFormField(
+                    controller: listenForController,
+                  )),
+            ],
+          ),
+          Row(
+            children: [
+              Text('On device: '),
+              Checkbox(
+                value: onDevice,
+                onChanged: switchOnDevice,
+              ),
+              Text('Log events: '),
+              Checkbox(
+                value: logEvents,
+                onChanged: switchLogging,
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class InitSpeechWidget extends StatelessWidget {
+  const InitSpeechWidget(this.hasSpeech, this.initSpeechState, {Key? key})
+      : super(key: key);
+
+  final bool hasSpeech;
+  final Future<void> Function() initSpeechState;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.spaceAround,
+      children: <Widget>[
+        TextButton(
+          onPressed: hasSpeech ? null : initSpeechState,
+          child: Text('Initialize'),
+        ),
+      ],
+    );
+  }
+}
+
+/// Display the current status of the listener
+class SpeechStatusWidget extends StatelessWidget {
+  const SpeechStatusWidget({
+    Key? key,
+    required this.speech,
+  }) : super(key: key);
+
+  final SpeechToText speech;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: EdgeInsets.symmetric(vertical: 20),
+      color: Theme.of(context).backgroundColor,
+      child: Center(
+        child: speech.isListening
+            ? Text(
+                "I'm listening...",
+                style: TextStyle(fontWeight: FontWeight.bold),
+              )
+            : Text(
+                'Not listening',
+                style: TextStyle(fontWeight: FontWeight.bold),
+              ),
+      ),
+    );
   }
 }
