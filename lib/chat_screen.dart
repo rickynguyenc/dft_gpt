@@ -1,6 +1,10 @@
+import 'dart:math';
+
 import 'package:chat_gpt_sdk/chat_gpt_sdk.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter_dotenv/flutter_dotenv.dart';
+import 'package:speech_to_text/speech_recognition_error.dart';
+import 'package:speech_to_text/speech_recognition_result.dart';
+import 'package:speech_to_text/speech_to_text.dart';
 import 'package:velocity_x/velocity_x.dart';
 
 import 'chatmessage.dart';
@@ -20,12 +24,32 @@ class _ChatScreenState extends State<ChatScreen> {
   bool _isImageSearch = false;
 
   bool _isTyping = false;
+  // properties for speaking to text
+  bool _hasSpeech = false;
+  bool _logEvents = false;
+  bool _onDevice = false;
+  final TextEditingController _pauseForController =
+      TextEditingController(text: '3');
+  final TextEditingController _listenForController =
+      TextEditingController(text: '30');
+  double level = 0.0;
+  double minSoundLevel = 50000;
+  double maxSoundLevel = -50000;
+  String lastWords = '';
+  String lastError = '';
+  String lastStatus = '';
+  String _currentLocaleId = '';
+  List<LocaleName> _localeNames = [];
+  final SpeechToText speech = SpeechToText();
 
   @override
   void initState() {
     chatGPT = OpenAI.instance.build(
-        token: dotenv.env["API_KEY"],
-        baseOption: HttpSetup(receiveTimeout: 60000));
+        token: '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',
+        baseOption: HttpSetup(
+            receiveTimeout: const Duration(seconds: 50),
+            connectTimeout: const Duration(seconds: 50)),
+        isLogger: true);
     super.initState();
   }
 
@@ -57,16 +81,110 @@ class _ChatScreenState extends State<ChatScreen> {
       final request = GenerateImage(message.text, 1, size: "256x256");
 
       final response = await chatGPT!.generateImage(request);
-      Vx.log(response!.data!.last!.url!);
-      insertNewData(response.data!.last!.url!, isImage: true);
+      insertNewData(response!.data!.last!.url!, isImage: true);
     } else {
       final request =
-          CompleteText(prompt: message.text, model: kTranslateModelV3);
+          CompleteText(prompt: message.text, model: 'text-davinci-003');
 
-      final response = await chatGPT!.onCompleteText(request: request);
-      Vx.log(response!.choices[0].text);
-      insertNewData(response.choices[0].text, isImage: false);
+      final response = await chatGPT!.onCompletion(request: request);
+      insertNewData(response!.choices[0].text, isImage: false);
     }
+  }
+
+  Future<void> initSpeechState() async {
+    _logEvent('Initialize');
+    try {
+      var hasSpeech = await speech.initialize(
+        onError: errorListener,
+        onStatus: statusListener,
+        debugLogging: _logEvents,
+      );
+      if (hasSpeech) {
+        // Get the list of languages installed on the supporting platform so they
+        // can be displayed in the UI for selection by the user.
+        _localeNames = await speech.locales();
+
+        var systemLocale = await speech.systemLocale();
+        _currentLocaleId = systemLocale?.localeId ?? '';
+      }
+      if (!mounted) return;
+
+      setState(() {
+        _hasSpeech = hasSpeech;
+      });
+    } catch (e) {
+      setState(() {
+        lastError = 'Speech recognition failed: ${e.toString()}';
+        _hasSpeech = false;
+      });
+    }
+  }
+
+  void startListening() {
+    lastWords = '';
+    lastError = '';
+    final pauseFor = int.tryParse(_pauseForController.text);
+    final listenFor = int.tryParse(_listenForController.text);
+    // Note that `listenFor` is the maximum, not the minimun, on some
+    // systems recognition will be stopped before this value is reached.
+    // Similarly `pauseFor` is a maximum not a minimum and may be ignored
+    // on some devices.
+    speech.listen(
+      onResult: resultListener,
+      listenFor: Duration(seconds: listenFor ?? 30),
+      pauseFor: Duration(seconds: pauseFor ?? 3),
+      partialResults: true,
+      localeId: _currentLocaleId,
+      onSoundLevelChange: soundLevelListener,
+      cancelOnError: true,
+      listenMode: ListenMode.confirmation,
+      onDevice: _onDevice,
+    );
+    setState(() {});
+  }
+
+  void stopListening() {
+    speech.stop();
+    setState(() {
+      level = 0.0;
+    });
+  }
+
+  void cancelListening() {
+    speech.cancel();
+    setState(() {
+      level = 0.0;
+    });
+  }
+
+  /// This callback is invoked each time new recognition results are
+  /// available after `listen` is called.
+  void resultListener(SpeechRecognitionResult result) {
+    'Result listener final: ${result.finalResult}, words: ${result.recognizedWords}';
+    setState(() {
+      lastWords = '${result.recognizedWords} - ${result.finalResult}';
+    });
+  }
+
+  void soundLevelListener(double level) {
+    minSoundLevel = min(minSoundLevel, level);
+    maxSoundLevel = max(maxSoundLevel, level);
+    // _logEvent('sound level $level: $minSoundLevel - $maxSoundLevel ');
+    setState(() {
+      this.level = level;
+    });
+  }
+
+  void errorListener(SpeechRecognitionError error) {
+    setState(() {
+      lastError = '${error.errorMsg} - ${error.permanent}';
+    });
+  }
+
+  void statusListener(String status) {
+    setState(() {
+      lastStatus = '$status';
+    });
   }
 
   void insertNewData(String response, {bool isImage = false}) {
@@ -101,6 +219,10 @@ class _ChatScreenState extends State<ChatScreen> {
                 _isImageSearch = false;
                 _sendMessage();
               },
+            ),
+            IconButton(
+              icon: const Icon(Icons.mic),
+              onPressed: () {},
             ),
             TextButton(
                 onPressed: () {
